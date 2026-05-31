@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>東京 セルフ飲み放題店DB</title>
+
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8398161859137802"
+crossorigin="anonymous"></script>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<style>
+*{box-sizing:border-box}
+body{
+margin:0;
+background:#111827;
+color:#fff;
+font-family:system-ui,-apple-system,sans-serif;
+}
+header{
+padding:24px;
+text-align:center;
+background:linear-gradient(135deg,#92400e,#ea580c,#facc15);
+}
+header h1{margin:0;font-size:30px}
+header p{margin-top:8px;color:#fff7ed}
+.wrap{max-width:1200px;margin:auto;padding:16px}
+.grid{
+display:grid;
+grid-template-columns:380px 1fr;
+gap:16px;
+}
+.panel{
+background:#1f2937;
+border-radius:18px;
+padding:16px;
+border:1px solid rgba(255,255,255,.12);
+}
+label{
+display:block;
+margin:10px 0 6px;
+font-weight:700;
+}
+input,select,textarea{
+width:100%;
+padding:12px;
+border-radius:12px;
+border:1px solid rgba(255,255,255,.12);
+background:#111827;
+color:#fff;
+}
+button{
+border:0;
+border-radius:12px;
+padding:11px 14px;
+background:#ea580c;
+color:#fff;
+font-weight:700;
+cursor:pointer;
+}
+button.secondary{background:#4b5563}
+button.danger{background:#dc2626}
+.btns{
+display:flex;
+gap:8px;
+flex-wrap:wrap;
+margin-top:10px;
+}
+#map{
+height:620px;
+border-radius:18px;
+background:#374151;
+}
+.results{
+display:grid;
+gap:10px;
+max-height:560px;
+overflow:auto;
+margin-top:12px;
+}
+.shop{
+background:#111827;
+border:1px solid rgba(255,255,255,.1);
+border-radius:14px;
+padding:12px;
+}
+.shop h3{
+margin:0 0 6px;
+color:#fde68a;
+}
+.tag{
+display:inline-block;
+background:#374151;
+padding:4px 8px;
+border-radius:999px;
+font-size:12px;
+margin:2px;
+}
+.score{
+display:inline-block;
+background:#92400e;
+padding:4px 8px;
+border-radius:999px;
+font-size:12px;
+font-weight:700;
+margin:2px;
+}
+.small{
+font-size:13px;
+color:#d1d5db;
+line-height:1.6;
+}
+#dataBox{display:none}
+textarea{
+min-height:200px;
+font-family:Consolas,monospace;
+}
+@media(max-width:900px){
+.grid{grid-template-columns:1fr}
+#map{height:430px}
+}
+</style>
+</head>
+
+<body>
+
+<header>
+<h1>東京 セルフ飲み放題店DB</h1>
+<p>セルフ式飲み放題・原価酒場・時間制飲み放題のお店を地図で探せるDB</p>
+</header>
+
+<main class="wrap">
+<div class="grid">
+
+<section class="panel">
+
+<label>エリア</label>
+<select id="areaMode"></select>
+
+<label>検索</label>
+<input id="keyword" placeholder="例：新宿 セルフ飲み放題 原価酒場 焼肉">
+
+<div class="btns">
+<button onclick="applySearch()">検索</button>
+<button class="secondary" onclick="showData()">CSV</button>
+<button class="secondary" onclick="showResults()">結果</button>
+<button class="danger" onclick="resetStores()">初期化</button>
+</div>
+
+<p id="status" class="small"></p>
+
+<div id="resultsBox" class="results"></div>
+
+<div id="dataBox">
+<p class="small">
+CSV形式：<br>
+id,name,area,address,lat,lng,tags
+</p>
+
+<textarea id="csvInput"></textarea>
+
+<div class="btns">
+<button onclick="applyCsv()">CSV反映</button>
+<button class="secondary" onclick="exportCsv()">CSV出力</button>
+</div>
+
+<textarea id="jsonBox"></textarea>
+</div>
+
+</section>
+
+<section class="panel">
+<div id="map"></div>
+</section>
+
+</div>
+</main>
+
+<script>
+
+const STORAGE_KEY = "tokyo_self_nomihodai_db_v1";
+
+/* ここにGoogleスプレッドシートのCSV公開URLを入れる */
+const CSV_URL = "";
+
+const MAX_INITIAL_DISPLAY = 150;
+
+const DEFAULT_STORES = [
+{
+id:"self_drink_001",
+name:"日本酒原価酒蔵 新宿総本店",
+area:"新宿",
+address:"東京都新宿区西新宿7-2-5",
+lat:35.6959,
+lng:139.6994,
+tags:["新宿","日本酒","原価酒場","飲み放題"]
+},
+{
+id:"self_drink_002",
+name:"やきとり○金 新宿本店",
+area:"新宿",
+address:"東京都新宿区歌舞伎町1-6-3",
+lat:35.6944,
+lng:139.7023,
+tags:["新宿","セルフ式","焼鳥","飲み放題"]
+}
+];
+
+let stores = [];
+let filteredStores = [];
+let map;
+let markers = [];
+
+async function init(){
+
+stores = await loadStores();
+
+map = L.map("map").setView([35.681236,139.767125],11);
+
+L.tileLayer(
+"https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+{
+maxZoom:19,
+attribution:"&copy; OpenStreetMap contributors"
+}
+).addTo(map);
+
+document.getElementById("areaMode").addEventListener("change",applySearch);
+document.getElementById("keyword").addEventListener("input",applySearch);
+
+buildAreas();
+applySearch();
+
+}
+
+async function loadStores(){
+
+try{
+
+if(CSV_URL){
+
+const res = await fetch(CSV_URL);
+const text = await res.text();
+const csvData = parseCsv(text);
+
+if(csvData.length) return csvData;
+
+}
+
+}catch(e){
+console.error(e);
+}
+
+return DEFAULT_STORES;
+
+}
+
+function parseCsv(text){
+
+const lines = text.trim().split(/\r?\n/);
+if(lines.length < 2) return [];
+
+const data = [];
+
+for(let i=1;i<lines.length;i++){
+
+const row = lines[i].split(",");
+
+if(row.length < 6) continue;
+
+data.push({
+id:row[0],
+name:row[1],
+area:row[2],
+address:row[3],
+lat:Number(row[4]),
+lng:Number(row[5]),
+tags:(row[6]||"").split("|")
+});
+
+}
+
+return data;
+
+}
+
+function buildAreas(){
+
+const select = document.getElementById("areaMode");
+const areas = [...new Set(stores.map(x=>x.area))];
+
+select.innerHTML = '<option value="all">東京全体</option>';
+
+areas.forEach(a=>{
+const opt = document.createElement("option");
+opt.value = a;
+opt.textContent = a;
+select.appendChild(opt);
+});
+
+}
+
+function applySearch(){
+
+const area = document.getElementById("areaMode").value;
+const kw = document.getElementById("keyword").value.toLowerCase();
+
+let results = stores.filter(s=>{
+
+const text = [
+s.name,
+s.area,
+s.address,
+(s.tags||[]).join(" ")
+].join(" ").toLowerCase();
+
+return (area==="all" || s.area===area)
+&& (!kw || text.includes(kw));
+
+});
+
+filteredStores = results.slice(0,MAX_INITIAL_DISPLAY);
+
+renderResults();
+renderMarkers();
+
+document.getElementById("status").textContent =
+filteredStores.length + "件表示 / 該当" + results.length + "件";
+
+}
+
+function renderResults(){
+
+const box = document.getElementById("resultsBox");
+
+if(!filteredStores.length){
+box.innerHTML = "該当なし";
+return;
+}
+
+box.innerHTML = filteredStores.map((s,i)=>`
+
+<div class="shop">
+<h3>${i+1}. ${s.name}</h3>
+<p>${s.address}</p>
+
+<p>
+<span class="score">セルフ飲み放題</span>
+<span class="tag">${s.area}</span>
+${(s.tags||[]).map(t=>`<span class="tag">${t}</span>`).join("")}
+</p>
+
+<div class="btns">
+<button class="secondary" onclick="focusStore('${s.id}')">地図</button>
+<button onclick="openGoogle('${s.id}')">GoogleMap</button>
+</div>
+</div>
+
+`).join("");
+
+}
+
+function renderMarkers(){
+
+markers.forEach(m=>m.remove());
+markers = [];
+
+filteredStores.forEach(s=>{
+
+if(!s.lat || !s.lng) return;
+
+const marker = L.marker([s.lat,s.lng]).addTo(map);
+marker.storeId = s.id;
+marker.bindPopup("<b>"+s.name+"</b><br>"+s.address);
+markers.push(marker);
+
+});
+
+}
+
+function focusStore(id){
+
+const s = stores.find(x=>x.id===id);
+if(!s) return;
+
+map.setView([s.lat,s.lng],16);
+
+const m = markers.find(x=>x.storeId===id);
+if(m) m.openPopup();
+
+}
+
+function openGoogle(id){
+
+const s = stores.find(x=>x.id===id);
+if(!s) return;
+
+window.open(
+"https://www.google.com/maps/search/?api=1&query="
++ encodeURIComponent(s.name+" "+s.address),
+"_blank"
+);
+
+}
+
+function applyCsv(){
+
+const raw = document.getElementById("csvInput").value;
+stores = parseCsv(raw);
+
+buildAreas();
+applySearch();
+
+}
+
+function exportCsv(){
+
+const csv = stores.map(s=>
+[
+s.id,
+s.name,
+s.area,
+s.address,
+s.lat,
+s.lng,
+(s.tags||[]).join("|")
+].join(",")
+).join("\n");
+
+document.getElementById("csvInput").value =
+"id,name,area,address,lat,lng,tags\n"+csv;
+
+document.getElementById("jsonBox").value =
+JSON.stringify(stores,null,2);
+
+}
+
+function resetStores(){
+
+localStorage.removeItem(STORAGE_KEY);
+stores = DEFAULT_STORES;
+
+buildAreas();
+applySearch();
+
+}
+
+function showData(){
+
+document.getElementById("dataBox").style.display = "block";
+document.getElementById("resultsBox").style.display = "none";
+
+}
+
+function showResults(){
+
+document.getElementById("dataBox").style.display = "none";
+document.getElementById("resultsBox").style.display = "grid";
+
+}
+
+window.addEventListener("load",init);
+
+</script>
+
+<div style="max-width:1200px;margin:30px auto;padding:0 16px;">
+
+<ins class="adsbygoogle"
+style="display:block"
+data-ad-client="ca-pub-8398161859137802"
+data-ad-slot="5599163841"
+data-ad-format="auto"
+data-full-width-responsive="true"></ins>
+
+<script>
+(adsbygoogle = window.adsbygoogle || []).push({});
+</script>
+
+</div>
+
+<script defer src="/_vercel/speed-insights/script.js"></script>
+<script defer src="/_vercel/insights/script.js"></script>
+
+</body>
+</html>
